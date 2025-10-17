@@ -70,7 +70,7 @@ class SignupPage extends StatelessWidget {
                             FilteringTextInputFormatter.deny(RegExp(r'\s')),
                           ],
                           decoration: const InputDecoration(
-                            hintText: 'username',
+                            hintText: 'Username',
                             filled: true,
                             fillColor: Colors.transparent,
                             contentPadding: EdgeInsets.symmetric(
