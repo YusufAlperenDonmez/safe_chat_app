@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:safe_chat_app/views/signup_page.dart';
+import 'package:safe_chat_app/views/main_page.dart';
 
 class LoginPage extends StatelessWidget {
   const LoginPage({super.key});
@@ -143,26 +144,15 @@ class LoginPage extends StatelessWidget {
                               elevation: 0,
                             ),
                             onPressed: () {
-                              bool hasError = false;
-                              if (usernameController.text.isEmpty) {
-                                usernameError.value = true;
-                                hasError = true;
-                              } else {
-                                usernameError.value = false;
-                              }
-                              if (passwordController.text.isEmpty) {
-                                passwordError.value = true;
-                                hasError = true;
-                              } else {
-                                passwordError.value = false;
-                              }
-
-                              if (hasError) {
+                              if (usernameController.text.isEmpty ||
+                                  passwordController.text.isEmpty) {
                                 showDialog(
                                   context: context,
                                   builder: (context) => AlertDialog(
                                     title: const Text('Error'),
-                                    content: Text('Please fill in all fields.'),
+                                    content: const Text(
+                                      'Please fill in all fields.',
+                                    ),
                                     actions: [
                                       TextButton(
                                         onPressed: () =>
@@ -173,7 +163,12 @@ class LoginPage extends StatelessWidget {
                                   ),
                                 );
                               } else {
-                                // Proceed with login logic
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const MainPage(),
+                                  ),
+                                );
                               }
                             },
                             child: const Text(
