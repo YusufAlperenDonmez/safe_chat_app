@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:ui' as ui;
+import 'dart:async';
 import 'package:safe_chat_app/services/auth_service.dart';
 import 'package:safe_chat_app/services/chat_service.dart';
 
@@ -19,6 +21,7 @@ class _ChatPageState extends State<ChatPage> {
   final TextEditingController _messageController = TextEditingController();
   final ChatService _chatService = ChatService();
   final AuthService _authService = AuthService();
+  StreamSubscription? _messageSubscription;
 
   Duration duration = const Duration();
   Duration position = const Duration();
@@ -32,8 +35,24 @@ class _ChatPageState extends State<ChatPage> {
     if (_messageController.text.isNotEmpty) {
       final messageText = _messageController.text.trim();
       try {
-        await _chatService.sendMessage(widget.recieverId, messageText);
+        final result = await _chatService.sendMessage(
+          widget.recieverId,
+          messageText,
+        );
         _messageController.clear();
+
+        if (result['isHarmful'] == true && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '⚠️ Uyarı: Mesajınız "${result['label']}" olarak işaretlendi.\n${result['description']}',
+                style: const TextStyle(fontSize: 14),
+              ),
+              backgroundColor: Colors.orange.shade800,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
       } catch (e) {
         ScaffoldMessenger.of(
           context,
@@ -48,25 +67,46 @@ class _ChatPageState extends State<ChatPage> {
     _fetchMessages();
   }
 
+  @override
+  void dispose() {
+    _messageSubscription?.cancel();
+    _messageController.dispose();
+    super.dispose();
+  }
+
   void _fetchMessages() {
     final currentUserId = _authService.currentUser?.uid;
     if (currentUserId == null) return;
 
-    _chatService.getMessages(currentUserId, widget.recieverId).listen((
-      snapshot,
-    ) {
-      setState(() {
-        _messages = snapshot.docs.map((doc) {
-          final data = doc.data() as Map<String, dynamic>?;
-          if (data == null) return {'text': '', 'isSender': false};
+    _messageSubscription = _chatService
+        .getMessages(currentUserId, widget.recieverId)
+        .listen((snapshot) {
+          setState(() {
+            _messages = snapshot.docs.map((doc) {
+              final data = doc.data() as Map<String, dynamic>?;
+              if (data == null) {
+                return {
+                  'text': '',
+                  'isSender': false,
+                  'isHarmful': false,
+                  'label': '',
+                };
+              }
 
-          final text = data['message'] ?? ''; // Use 'message' field for content
-          final senderId = data['senderId'] ?? '';
+              final text = data['message'] ?? '';
+              final senderId = data['senderId'] ?? '';
+              final isHarmful = data['isHarmful'] ?? false;
+              final label = data['hateSpeechLabel'] ?? '';
 
-          return {'text': text, 'isSender': senderId == currentUserId};
-        }).toList();
-      });
-    });
+              return {
+                'text': text,
+                'isSender': senderId == currentUserId,
+                'isHarmful': isHarmful,
+                'label': label,
+              };
+            }).toList();
+          });
+        });
   }
 
   @override
@@ -95,6 +135,8 @@ class _ChatPageState extends State<ChatPage> {
                     BubbleNormal(
                       text: message['text'],
                       isSender: message['isSender'],
+                      isHarmful: message['isHarmful'] ?? false,
+                      label: message['label'] ?? '',
                       color: message['isSender']
                           ? const Color(0xFFE8E8EE)
                           : const Color(0xFF1B97F3),
@@ -123,12 +165,14 @@ class _ChatPageState extends State<ChatPage> {
 }
 
 /// Simple chat bubble implementation used by this page.
-class BubbleNormal extends StatelessWidget {
+class BubbleNormal extends StatefulWidget {
   final String text;
   final bool isSender;
   final Color color;
   final bool tail;
   final TextStyle? textStyle;
+  final bool isHarmful;
+  final String label;
 
   const BubbleNormal({
     super.key,
@@ -137,32 +181,148 @@ class BubbleNormal extends StatelessWidget {
     required this.color,
     this.tail = false,
     this.textStyle,
+    this.isHarmful = false,
+    this.label = '',
   });
 
   @override
+  State<BubbleNormal> createState() => _BubbleNormalState();
+}
+
+class _BubbleNormalState extends State<BubbleNormal> {
+  bool _revealed = false;
+
+  Future<void> _handleTapIfBlurred(BuildContext context) async {
+    if (!(widget.isHarmful && !widget.isSender) || _revealed) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hassas içerik'),
+        content: Text(
+          'Bu mesaj "${widget.label}" olarak işaretlendi. Görüntülemek istediğinize emin misiniz?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Göster'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      setState(() {
+        _revealed = true;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final alignment = isSender ? Alignment.centerRight : Alignment.centerLeft;
+    final alignment = widget.isSender
+        ? Alignment.centerRight
+        : Alignment.centerLeft;
     final radius = Radius.circular(12);
+    final shouldBlur = widget.isHarmful && !widget.isSender && !_revealed;
     return Align(
       alignment: alignment,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.only(
-            topLeft: radius,
-            topRight: radius,
-            bottomLeft: isSender ? radius : Radius.zero,
-            bottomRight: isSender ? Radius.zero : radius,
+      child: GestureDetector(
+        onTap: () => _handleTapIfBlurred(context),
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
-        ),
-        child: Text(
-          text,
-          style: textStyle ?? const TextStyle(color: Colors.white),
+          decoration: BoxDecoration(
+            color: widget.color,
+            borderRadius: BorderRadius.only(
+              topLeft: radius,
+              topRight: radius,
+              bottomLeft: widget.isSender ? radius : Radius.zero,
+              bottomRight: widget.isSender ? Radius.zero : radius,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (shouldBlur) ...[
+                Stack(
+                  children: [
+                    ImageFiltered(
+                      imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                      child: Text(
+                        widget.text,
+                        style:
+                            widget.textStyle ??
+                            const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    Text(
+                      widget.text,
+                      style:
+                          (widget.textStyle ??
+                                  const TextStyle(color: Colors.white))
+                              .copyWith(color: Colors.transparent),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade700,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '⚠️ Hassas İçerik: ${widget.label}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ] else ...[
+                Text(
+                  widget.text,
+                  style:
+                      widget.textStyle ?? const TextStyle(color: Colors.white),
+                ),
+                if (widget.isHarmful &&
+                    widget.isSender &&
+                    widget.label.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade700,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '⚠️ ${widget.label}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ],
+          ),
         ),
       ),
     );
