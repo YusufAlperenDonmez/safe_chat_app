@@ -43,3 +43,25 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Firebase and sensitive configuration files
+firebase_options.dart
+firebase.json
+**/google-services.json
+**/GoogleService-Info.plist
+.env
+.env.local
+.env.*.local
+
+# API Keys and Secrets
+lib/config/secrets.dart
+lib/firebase_options.dart
+
+# iOS Pods
+/ios/Pods/
+/ios/Podfile.lock
+
+# macOS
+/macos/Flutter/GeneratedPluginRegistrant.swift
+
+# Web
+/web/firebase-config.js
