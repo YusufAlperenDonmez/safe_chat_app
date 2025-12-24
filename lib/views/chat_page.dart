@@ -1,22 +1,76 @@
 import 'package:flutter/material.dart';
+import 'package:safe_chat_app/services/auth_service.dart';
+import 'package:safe_chat_app/services/chat_service.dart';
 
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key});
+  final String recieverEmail;
+  final String recieverId;
+  const ChatPage({
+    super.key,
+    required this.recieverEmail,
+    required this.recieverId,
+  });
 
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
 
 class _ChatPageState extends State<ChatPage> {
+  final TextEditingController _messageController = TextEditingController();
+  final ChatService _chatService = ChatService();
+  final AuthService _authService = AuthService();
+
   Duration duration = const Duration();
   Duration position = const Duration();
   bool isPlaying = false;
   bool isLoading = false;
   bool isPause = false;
 
+  List<Map<String, dynamic>> _messages = [];
+
+  void sendMessage() async {
+    if (_messageController.text.isNotEmpty) {
+      final messageText = _messageController.text.trim();
+      try {
+        await _chatService.sendMessage(widget.recieverId, messageText);
+        _messageController.clear();
+      } catch (e) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
+      }
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchMessages();
+  }
+
+  void _fetchMessages() {
+    final currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    _chatService.getMessages(currentUserId, widget.recieverId).listen((
+      snapshot,
+    ) {
+      setState(() {
+        _messages = snapshot.docs.map((doc) {
+          final data = doc.data() as Map<String, dynamic>?;
+          if (data == null) return {'text': '', 'isSender': false};
+
+          final text = data['message'] ?? ''; // Use 'message' field for content
+          final senderId = data['senderId'] ?? '';
+
+          return {'text': text, 'isSender': senderId == currentUserId};
+        }).toList();
+      });
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.lightBlue,
@@ -26,67 +80,42 @@ class _ChatPageState extends State<ChatPage> {
             Navigator.pop(context);
           },
         ),
-        title: Row(
-          children: [
-            CircleAvatar(
-              child: Icon(
-                Icons.person,
-                color: Colors.white,
-              ), // Default icon if no image
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text('David', style: TextStyle(color: Colors.white)),
-                Text(
-                  'Online',
-                  style: TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ],
-            ),
-          ],
+        title: Text(
+          widget.recieverEmail,
+          style: const TextStyle(color: Colors.white),
         ),
       ),
-      body: Stack(
+      body: Column(
         children: [
-          SingleChildScrollView(
-            child: Column(
-              children: <Widget>[
-                BubbleNormal(
-                  text: 'Hello, There!',
-                  isSender: false,
-                  color: const Color(0xFF1B97F3),
-                  tail: true,
-                  textStyle: const TextStyle(fontSize: 16, color: Colors.white),
-                ),
-                BubbleNormal(
-                  text: 'General Kenobi!',
-                  isSender: true,
-                  color: const Color(0xFFE8E8EE),
-                  tail: true,
-                  textStyle: const TextStyle(fontSize: 16, color: Colors.black),
-                ),
-                DateChip(date: DateTime(now.year, now.month, now.day - 2)),
-                BubbleNormal(
-                  text: 'bubble normal without tail',
-                  isSender: false,
-                  color: const Color(0xFF1B97F3),
-                  tail: false,
-                  textStyle: const TextStyle(fontSize: 16, color: Colors.white),
-                ),
-                BubbleNormal(
-                  text: 'bubble normal without tail',
-                  isSender: true,
-                  color: const Color(0xFFE8E8EE),
-                  tail: false,
-                  textStyle: const TextStyle(fontSize: 16, color: Colors.black),
-                ),
-                const SizedBox(height: 100),
-              ],
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: <Widget>[
+                  for (var message in _messages)
+                    BubbleNormal(
+                      text: message['text'],
+                      isSender: message['isSender'],
+                      color: message['isSender']
+                          ? const Color(0xFFE8E8EE)
+                          : const Color(0xFF1B97F3),
+                      tail: true,
+                      textStyle: TextStyle(
+                        fontSize: 16,
+                        color: message['isSender']
+                            ? Colors.black
+                            : Colors.white,
+                      ),
+                    ),
+                  const SizedBox(height: 10),
+                ],
+              ),
             ),
           ),
-          MessageBar(onSend: (message) => print(message), actions: []),
+          MessageBar(
+            controller: _messageController,
+            onSend: (message) => sendMessage(),
+            actions: [],
+          ),
         ],
       ),
     );
@@ -170,21 +199,25 @@ class DateChip extends StatelessWidget {
 class MessageBar extends StatefulWidget {
   final ValueChanged<String>? onSend;
   final List<Widget>? actions;
+  final TextEditingController controller;
 
-  const MessageBar({super.key, this.onSend, this.actions});
+  const MessageBar({
+    super.key,
+    this.onSend,
+    this.actions,
+    required this.controller,
+  });
 
   @override
   State<MessageBar> createState() => _MessageBarState();
 }
 
 class _MessageBarState extends State<MessageBar> {
-  final TextEditingController _controller = TextEditingController();
-
   void _handleSend() {
-    final text = _controller.text.trim();
+    final text = widget.controller.text.trim();
     if (text.isEmpty) return;
     widget.onSend?.call(text);
-    _controller.clear();
+    widget.controller.clear();
     setState(() {});
   }
 
@@ -210,7 +243,7 @@ class _MessageBarState extends State<MessageBar> {
                     children: [
                       Expanded(
                         child: TextField(
-                          controller: _controller,
+                          controller: widget.controller,
                           decoration: const InputDecoration(
                             hintText: 'Type a message',
                             border: InputBorder.none,
